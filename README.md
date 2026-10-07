@@ -75,6 +75,19 @@ AI_GATEWAY_API_KEY=
 
 If `JEV_PROVIDER` is unset, the bot uses TypeSafe when `TYPESAFE_API_KEY` is set, otherwise Gateway when `AI_GATEWAY_API_KEY` is set.
 
+## Third-party models
+
+Set `MODEL=custom` to route decisions through any OpenAI-compatible chat endpoint. Laya via the Hugging Face router:
+
+```sh
+MODEL=custom
+CUSTOM_MODEL_BASE_URL=https://router.huggingface.co/v1
+CUSTOM_MODEL_ID=convaiinnovations/laya
+CUSTOM_API_KEY=hf_your_token
+```
+
+The model gets the same bias/intent/leverage questions as Jev and answers with plain words (`long`, `open`, `5`), so its probabilities collapse to the picked choice. Works with vLLM/Ollama too, e.g. `CUSTOM_MODEL_BASE_URL=http://localhost:8000/v1` with an empty key.
+
 ## Live testnet orders
 
 1. Keep `HL_TESTNET=true`.
@@ -101,10 +114,13 @@ See [`.env.example`](.env.example). The ones that change behavior:
 | --- | --- | --- |
 | `HL_COINS` | `BTC,ETH,SOL,DOGE,BNB` | Sleeves to run |
 | `HL_TESTNET` | `true` | `false` is mainnet |
-| `MODEL` | `mock` | `jev` needs a TypeSafe or Gateway key |
+| `MODEL` | `mock` | `jev` needs a TypeSafe or Gateway key; `custom` needs `CUSTOM_MODEL_BASE_URL` |
 | `JEV_PROVIDER` | `typesafe` | `typesafe` or `gateway` |
 | `TYPESAFE_API_KEY` | empty | Official TypeSafe key |
 | `AI_GATEWAY_API_KEY` | empty | Vercel AI Gateway key |
+| `CUSTOM_MODEL_BASE_URL` | empty | OpenAI-compatible endpoint for `MODEL=custom`, e.g. `https://router.huggingface.co/v1` |
+| `CUSTOM_MODEL_ID` | `convaiinnovations/laya` | Model id sent to the custom endpoint |
+| `CUSTOM_API_KEY` | empty | Bearer token for the custom endpoint (e.g. HF token) |
 | `PRIVATE_KEY` | empty | First coin. Empty is a dry run |
 | `DRY_RUN` | `false` | `true` simulates every sleeve |
 | `TICK_MS` | `2000` | Decision + requote cadence |

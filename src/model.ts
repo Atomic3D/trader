@@ -367,6 +367,88 @@ export class JevModel implements Model {
   }
 }
 
+const CUSTOM_CHOICES = {
+  bias: ["long", "short"] as const,
+  open: ["open", "hold"] as const,
+  manage: ["open", "close", "hold"] as const,
+};
+
+/** One chat turn with a third-party OpenAI-compatible model (e.g. Laya via HF router). */
+async function customChat(userText: string): Promise<{ text: string; inputTokens: number }> {
+  const key = config.customApiKey?.trim();
+  if (!config.customBaseUrl) throw new Error("MODEL=custom needs CUSTOM_MODEL_BASE_URL");
+  const res = await fetch(`${config.customBaseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(key ? { authorization: `Bearer ${key}` } : {}),
+    },
+    body: JSON.stringify({
+      model: config.customModelId,
+      messages: [
+        { role: "system", content: "You are a trading decision engine. Answer with exactly one lowercase word from the given options. No punctuation, no explanation." },
+        { role: "user", content: userText },
+      ],
+      temperature: 0,
+      max_tokens: 4,
+    }),
+    signal: AbortSignal.timeout(JEV_DEADLINE_MS),
+  });
+  if (!res.ok) throw new Error(`custom model http ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const j = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number };
+  };
+  return {
+    text: j.choices?.[0]?.message?.content ?? "",
+    inputTokens: j.usage?.prompt_tokens ?? 0,
+  };
+}
+
+/**
+ * Third-party chat model through any OpenAI-compatible endpoint. It answers the same
+ * bias/intent/leverage questions as Jev, but as plain words, so probabilities collapse
+ * to a point mass on the picked choice.
+ */
+export class CustomModel implements Model {
+  readonly name = "custom";
+
+  async decide(state: TradeState): Promise<ModelDecision> {
+    const t0 = performance.now();
+    const pos = state.position;
+    const stance = pos.side === "flat" ? "flat" : `${pos.side} ${pos.size} @ ${pos.entry ?? "?"}`;
+    const rungs = leverageRungs(state.maxLeverage);
+    const common = [
+      `Market: ${state.coin} ${state.market}, mid=${state.mid}, spreadBps=${state.spreadBps}.`,
+      `Position: ${stance}, leverage=${pos.leverage ?? "unset"}, maxLeverage=${state.maxLeverage}x.`,
+      `Trend: returnsBps last1=${state.returnsBps.last1} last5=${state.returnsBps.last5} last20=${state.returnsBps.last20} last100=${state.returnsBps.last100}.`,
+      `Book imbalance=${state.bookImbalance} ([-1 sells, +1 buys]). RSI14=${state.indicators.rsi14}. FundingBps=${state.asset.fundingBps}.`,
+    ].join("\n");
+    const questions = pos.side === "flat"
+      ? `Q1 direction, options [long|short]:\nQ2 action, options [open|hold]:\nQ3 leverage rung, options [${rungs.join("|")}]:`
+      : `Q1 direction, options [long|short]:\nQ2 action, options [open|close|hold]:\nQ3 leverage rung, options [${rungs.join("|")}]:`;
+    const { text, inputTokens } = await customChat(`${common}\n${questions}\nAnswer as three lines: <bias>, <intent>, <leverage>.`);
+    const lines = text.split(/[\n,]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const biasPick = pickKnown(lines[0], CUSTOM_CHOICES.bias);
+    const choices = pos.side === "flat" ? CUSTOM_CHOICES.open : CUSTOM_CHOICES.manage;
+    const intent = liveIntent(pos.side, biasPick ? pick(lines[1], choices, "hold") : "hold");
+    const dir = choiceProbs({ choice: biasPick ?? undefined }, [...CUSTOM_CHOICES.bias]);
+    const act = choiceProbs({ choice: pickKnown(lines[1], choices) ?? undefined }, [...choices]);
+    return pack({
+      intent,
+      bias: biasPick ?? "long",
+      leverage: parseLeverage(lines[2], state.maxLeverage, pos.leverage ?? 1),
+      longP: dir.long!,
+      shortP: dir.short!,
+      openP: act.open!,
+      closeP: act.close ?? 0,
+      holdP: act.hold!,
+      latencyMs: performance.now() - t0,
+      inputTokens,
+    });
+  }
+}
+
 /** Deterministic stand-in: momentum + imbalance. Jev-shaped open/close/hold/long/short/leverage. */
 export class MockModel implements Model {
   readonly name = "mock";
@@ -408,6 +490,10 @@ export class MockModel implements Model {
 }
 
 export const createModel = (): Model => {
+  if (config.model === "custom") {
+    if (!config.customBaseUrl) throw new Error("MODEL=custom needs CUSTOM_MODEL_BASE_URL. For Laya via Hugging Face router: https://router.huggingface.co/v1 with HF token in CUSTOM_API_KEY.");
+    return new CustomModel();
+  }
   if (config.model !== "jev") return new MockModel();
   assertJevCredentials(config.model, config.jevProvider, process.env);
   return new JevModel();

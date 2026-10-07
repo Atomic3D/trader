@@ -1,5 +1,11 @@
 const env = (key: string, fallback?: string) => process.env[key] ?? fallback;
 
+/** OpenAI-compatible endpoint for a third-party model (e.g. a Hugging Face router server). */
+export function resolveCustomModel(url: string | undefined): string | null {
+  const set = typeof url === "string" ? url.trim() : "";
+  return set ? set.replace(/\/+$/, "") : null;
+}
+
 export type JevProvider = "typesafe" | "gateway";
 
 export function resolveJevProvider(e: {
@@ -38,6 +44,7 @@ export function assertJevCredentials(
 const hlTestnet = env("HL_TESTNET", "true") !== "false";
 const jevProvider = resolveJevProvider(process.env);
 const jevModelId = resolveJevModelId(process.env, jevProvider);
+const customBaseUrl = resolveCustomModel(env("CUSTOM_MODEL_BASE_URL"));
 
 export const config = {
   hlTestnet,
@@ -55,7 +62,11 @@ export const config = {
   /** How far an Ioc exit crosses the touch so it fills on the spot. */
   closeSlippageBps: Number(env("CLOSE_SLIPPAGE_BPS", "5")),
   horizonBlocks: Number(env("HORIZON_BLOCKS", "100")),
-  model: env("MODEL", "mock") as "mock" | "jev",
+  model: env("MODEL", "mock") as "mock" | "jev" | "custom",
+  /** Set when MODEL=custom. Laya example: base https://router.huggingface.co/v1, id convaiinnovations/laya. */
+  customBaseUrl,
+  customModelId: env("CUSTOM_MODEL_ID", "convaiinnovations/laya"),
+  customApiKey: env("CUSTOM_API_KEY"),
   /** typesafe = official TypeSafe API. gateway = Vercel AI Gateway. */
   jevProvider,
   jevModelId,
